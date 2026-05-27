@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const LINE_ACCESS_TOKEN = Deno.env.get("LINE_ACCESS_TOKEN");
+const SCHOOL_GROUP_IDS_ENV = Deno.env.get("SCHOOL_GROUP_IDS") || Deno.env.get("SCHOOL_GROUP_ID") || "";
+const groupIds = SCHOOL_GROUP_IDS_ENV.split(',').map(id => id.trim()).filter(id => id.length > 0);
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,35 +15,62 @@ serve(async (req) => {
   }
 
   try {
-    // เพิ่มรับค่า actionType ('create', 'update', 'delete')
     const { task, userIds, assignerName, siteUrl, actionType = 'create' } = await req.json();
 
     if (!task || !userIds || userIds.length === 0) {
-      return new Response(JSON.stringify({ message: "No data or users to notify" }), { headers: corsHeaders });
+      return new Response(JSON.stringify({ message: "No data or users" }), { headers: corsHeaders });
     }
 
-    const dateObj = new Date(task.date);
-    const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
-    const dayTwoDigits = String(dateObj.getDate()).padStart(2, '0');
-    const formattedDate = `${dayTwoDigits} ${thaiMonths[dateObj.getMonth()]} ${dateObj.getFullYear() + 543}`;
+    // ---------------------------------------------------------
+    // 🐞 DEBUG LOGS
+    console.log("========================================");
+    console.log("เป้าหมาย Group IDs:", groupIds);
+    console.log("เป้าหมาย User IDs (ส่งแชทส่วนตัว):", userIds);
+    // ---------------------------------------------------------
+
+    const formatThaiDate = (dateStr: string) => {
+      if (!dateStr) return '';
+      const dateObj = new Date(dateStr);
+      const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+      return `${String(dateObj.getDate()).padStart(2, '0')} ${thaiMonths[dateObj.getMonth()]} ${dateObj.getFullYear() + 543}`;
+    };
+
+    const startDateFormatted = formatThaiDate(task.date);
+    let displayDate = startDateFormatted;
+    
+    const endDateObj = task.endDate || task.end_date;
+    if (endDateObj && endDateObj !== task.date) {
+      const endDateFormatted = formatThaiDate(endDateObj);
+      displayDate = `${startDateFormatted} - ${endDateFormatted}`;
+    }
+
     const formattedTime = task.time ? `${task.time.substring(0, 5)} น.` : 'ไม่ระบุ';
 
-    // 🎨 กำหนดสีและข้อความตามการกระทำ (actionType)
-    let headerColor = "#2563EB"; // สีน้ำเงินเริ่มต้น (สร้างใหม่)
-    let headerText = "📢 มอบหมายกิจกรรมใหม่";
+    // 🎨 กำหนดสีและข้อความตาม Action (ใช้การไล่สี Gradient ให้ตรงกับ Design SCB Connect)
+    let startColor = "#722ed1";
+    let endColor = "#9254de";
+    let mainColor = "#722ed1";
+    let subTitle = "รายการมอบหมายกิจกรรม";
     let altTextPrefix = "📢 มีกิจกรรมใหม่:";
+    let iconText = "🗓️ แจ้งเตือนกิจกรรมใหม่";
 
     if (actionType === 'update') {
-      headerColor = "#F59E0B"; // สีส้ม (แก้ไข)
-      headerText = "✏️ แจ้งอัปเดตข้อมูลกิจกรรม";
+      startColor = "#d97706"; // โทนส้ม
+      endColor = "#f59e0b";
+      mainColor = "#d97706";
+      subTitle = "รายการอัปเดตกิจกรรม";
       altTextPrefix = "✏️ อัปเดตกิจกรรม:";
+      iconText = "✏️ แจ้งอัปเดตกิจกรรม";
     } else if (actionType === 'delete') {
-      headerColor = "#EF4444"; // สีแดง (ยกเลิก/ลบ)
-      headerText = "❌ แจ้งยกเลิกกิจกรรม";
+      startColor = "#dc2626"; // โทนแดง
+      endColor = "#ef4444";
+      mainColor = "#dc2626";
+      subTitle = "รายการยกเลิกกิจกรรม";
       altTextPrefix = "❌ ยกเลิกกิจกรรม:";
+      iconText = "❌ แจ้งยกเลิกกิจกรรม";
     }
 
-    // โครงสร้าง Flex Message
+    // 🌟 สร้างโครงสร้าง Flex Message สไตล์ SCB Connect จาก HTML ที่ให้มา
     const flexMessage = {
       type: "flex",
       altText: `${altTextPrefix} ${task.title}`,
@@ -51,43 +80,103 @@ serve(async (req) => {
         header: {
           type: "box",
           layout: "vertical",
-          backgroundColor: headerColor, // เปลี่ยนสีตามสถานะ
           paddingAll: "xl",
+          background: {
+            type: "linearGradient",
+            angle: "135deg",
+            startColor: startColor,
+            endColor: endColor
+          },
           contents: [
-            { type: "text", text: headerText, color: "#FFFFFF", weight: "bold", size: "md" }
+            { type: "text", text: iconText, color: "#ffffff", weight: "bold", size: "md" }
           ]
         },
         body: {
           type: "box",
           layout: "vertical",
-          spacing: "md",
           paddingAll: "xl",
           contents: [
-            // ถ้ายกเลิก ให้ขีดฆ่าชื่อกิจกรรม
-            { type: "text", text: task.title, weight: "bold", size: "xl", wrap: true, color: actionType === 'delete' ? "#9ca3af" : "#1f2937", decoration: actionType === 'delete' ? "line-through" : "none" },
-            { type: "separator", margin: "md" },
+            { type: "text", text: subTitle, color: "#68626e", size: "sm" },
+            { 
+              type: "text", 
+              text: task.title, 
+              color: mainColor, 
+              size: "xl", 
+              weight: "bold", 
+              wrap: true, 
+              margin: "sm",
+              decoration: actionType === 'delete' ? "line-through" : "none"
+            },
             {
               type: "box",
               layout: "vertical",
-              spacing: "sm",
-              margin: "md",
+              margin: "xl",
+              spacing: "md",
               contents: [
-                { type: "box", layout: "baseline", spacing: "sm", contents: [
-                  { type: "text", text: "📅 วันที่:", color: "#9ca3af", size: "sm", flex: 2 },
-                  { type: "text", text: formattedDate, wrap: true, color: "#4b5563", size: "sm", flex: 5, weight: "bold", decoration: actionType === 'delete' ? "line-through" : "none" }
-                ]},
-                { type: "box", layout: "baseline", spacing: "sm", contents: [
-                  { type: "text", text: "⏰ เวลา:", color: "#9ca3af", size: "sm", flex: 2 },
-                  { type: "text", text: formattedTime, wrap: true, color: "#4b5563", size: "sm", flex: 5, weight: "bold", decoration: actionType === 'delete' ? "line-through" : "none" }
-                ]},
-                { type: "box", layout: "baseline", spacing: "sm", contents: [
-                  { type: "text", text: "📍 สถานที่:", color: "#9ca3af", size: "sm", flex: 2 },
-                  { type: "text", text: task.location || 'ไม่ระบุ', wrap: true, color: "#4b5563", size: "sm", flex: 5, decoration: actionType === 'delete' ? "line-through" : "none" }
-                ]},
-                { type: "box", layout: "baseline", spacing: "sm", contents: [
-                  { type: "text", text: actionType === 'delete' ? "👤 ยกเลิกโดย:" : "👤 มอบหมายโดย:", color: "#9ca3af", size: "sm", flex: 2 },
-                  { type: "text", text: assignerName, wrap: true, color: "#4b5563", size: "sm", flex: 5 }
-                ]}
+                {
+                  type: "box",
+                  layout: "horizontal",
+                  contents: [
+                    { type: "text", text: "วันที่", color: "#68626e", size: "sm", flex: 2 },
+                    { 
+                      type: "text", 
+                      text: displayDate, 
+                      color: "#1b1c1c", 
+                      size: "sm", 
+                      flex: 5, 
+                      align: "end", 
+                      wrap: true, 
+                      weight: "bold",
+                      decoration: actionType === 'delete' ? "line-through" : "none" 
+                    }
+                  ]
+                },
+                {
+                  type: "box",
+                  layout: "horizontal",
+                  contents: [
+                    { type: "text", text: "เวลา", color: "#68626e", size: "sm", flex: 2 },
+                    { 
+                      type: "text", 
+                      text: formattedTime, 
+                      color: "#1b1c1c", 
+                      size: "sm", 
+                      flex: 5, 
+                      align: "end", 
+                      wrap: true, 
+                      weight: "bold",
+                      decoration: actionType === 'delete' ? "line-through" : "none"
+                    }
+                  ]
+                },
+                {
+                  type: "box",
+                  layout: "horizontal",
+                  contents: [
+                    { type: "text", text: "สถานที่", color: "#68626e", size: "sm", flex: 2 },
+                    { 
+                      type: "text", 
+                      text: task.location || 'ไม่ระบุ', 
+                      color: "#1b1c1c", 
+                      size: "sm", 
+                      flex: 5, 
+                      align: "end", 
+                      wrap: true, 
+                      weight: "bold",
+                      decoration: actionType === 'delete' ? "line-through" : "none"
+                    }
+                  ]
+                }
+              ]
+            },
+            { type: "separator", margin: "xl", color: "#e4e2e2" },
+            {
+              type: "box",
+              layout: "horizontal",
+              margin: "xl",
+              contents: [
+                { type: "text", text: actionType === 'delete' ? "ยกเลิกโดย" : "มอบหมายโดย", color: "#68626e", size: "sm", flex: 2 },
+                { type: "text", text: assignerName, color: "#1b1c1c", size: "sm", flex: 5, align: "end", weight: "bold", wrap: true }
               ]
             }
           ]
@@ -95,20 +184,19 @@ serve(async (req) => {
         footer: {
           type: "box",
           layout: "vertical",
-          backgroundColor: "#f9fafb",
-          paddingAll: "md",
+          paddingAll: "xl",
+          paddingTop: "none",
           contents: actionType === 'delete' ? [
-            // ถ้ายกเลิก ไม่ต้องมีปุ่มลิงก์ ให้แสดงข้อความแทน
-            { type: "text", text: "กิจกรรมนี้ถูกยกเลิกแล้ว", color: "#EF4444", size: "sm", align: "center", weight: "bold" }
+            { type: "text", text: "กิจกรรมนี้ถูกยกเลิกแล้ว", color: "#EF4444", size: "md", align: "center", weight: "bold" }
           ] : [
             {
               type: "button",
               style: "primary",
-              color: headerColor, // เปลี่ยนสีปุ่มให้ตรงกับ Header
+              color: mainColor,
               height: "sm",
               action: {
                 type: "uri",
-                label: "รายละเอียดกิจกรรม",
+                label: "ดูรายละเอียดกิจกรรม",
                 uri: siteUrl || "https://line.me"
               }
             }
@@ -117,23 +205,33 @@ serve(async (req) => {
       }
     };
 
-    const response = await fetch("https://api.line.me/v2/bot/message/multicast", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${LINE_ACCESS_TOKEN}`
-      },
-      body: JSON.stringify({
-        to: userIds,
-        messages: [flexMessage]
-      })
-    });
+    const promises = [];
+    
+    // ส่งเข้ากลุ่มทั้งหมดที่กำหนดไว้ (ใช้ Multicast รองรับได้สูงสุด 500 กลุ่มพร้อมกัน)
+    if (groupIds.length > 0) {
+      promises.push(
+        fetch("https://api.line.me/v2/bot/message/multicast", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${LINE_ACCESS_TOKEN}` },
+          body: JSON.stringify({ to: groupIds, messages: [flexMessage] })
+        }).then(async (res) => console.log("ผลการส่งเข้ากลุ่ม:", await res.json())) 
+      );
+    }
 
-    const data = await response.json();
+    // ส่งเข้าแชทส่วนตัวของผู้รับผิดชอบ (แบบ Multicast)
+    if (userIds && userIds.length > 0) {
+      promises.push(
+        fetch("https://api.line.me/v2/bot/message/multicast", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${LINE_ACCESS_TOKEN}` },
+          body: JSON.stringify({ to: userIds, messages: [flexMessage] })
+        })
+      );
+    }
 
-    return new Response(JSON.stringify({ success: true, data }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" }
-    });
+    await Promise.all(promises);
+
+    return new Response(JSON.stringify({ success: true, message: "แจ้งเตือนสำเร็จ" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });

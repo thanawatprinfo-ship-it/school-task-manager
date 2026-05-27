@@ -10,6 +10,25 @@ const formatDateThai = (dateString) => {
   return `${date.getDate()} ${thaiMonths[date.getMonth()]} ${date.getFullYear() + 543}`;
 };
 
+// ฟังก์ชันสำหรับแสดงช่วงวันที่ (กรณีหลายวัน)
+const formatTaskDateRange = (startDateStr, endDateStr) => {
+  const start = formatDateThai(startDateStr);
+  if (endDateStr && endDateStr !== startDateStr) {
+    const end = formatDateThai(endDateStr);
+    return `${start} - ${end}`;
+  }
+  return start;
+};
+
+// เช็คว่าวันที่เป้าหมาย อยู่ในระหว่างช่วงเวลาของกิจกรรมหรือไม่
+const isDateInTaskRange = (targetDateStr, startDateStr, endDateStr) => {
+  if (!startDateStr) return false;
+  const targetTime = new Date(targetDateStr).getTime();
+  const startTime = new Date(startDateStr).getTime();
+  const endTime = endDateStr ? new Date(endDateStr).getTime() : startTime;
+  return targetTime >= startTime && targetTime <= endTime;
+};
+
 // ฟังก์ชันจัดรูปแบบเวลา
 const formatTimeThai = (timeString) => {
   if (!timeString) return '';
@@ -98,7 +117,7 @@ export default function App() {
 
   // --- Task Form State ---
   const [editingTaskId, setEditingTaskId] = useState(null);
-  const [newTask, setNewTask] = useState({ title: '', department: '', description: '', date: '', time: '', location: '', assignees: [] });
+  const [newTask, setNewTask] = useState({ title: '', department: '', description: '', date: '', end_date: '', time: '', location: '', assignees: [] });
   
   // Custom Dropdown State
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -251,12 +270,13 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const isUpcoming = (dateStr, timeStr) => {
-    if (!dateStr) return false;
-    const [year, month, day] = dateStr.split('-');
+  const isUpcoming = (dateStr, timeStr, endDateStr) => {
+    const targetDateStr = endDateStr || dateStr;
+    if (!targetDateStr) return false;
+    const [year, month, day] = targetDateStr.split('-');
     const taskDateTime = new Date(year, month - 1, day);
     
-    if (timeStr) {
+    if (timeStr && !endDateStr) {
       const [hours, minutes] = timeStr.split(':');
       taskDateTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
     } else {
@@ -292,12 +312,12 @@ export default function App() {
   const tomorrowStr = `${tomorrowObj.getFullYear()}-${String(tomorrowObj.getMonth() + 1).padStart(2, '0')}-${String(tomorrowObj.getDate()).padStart(2, '0')}`;
 
   const myPendingTasks = currentUser ? tasks
-    .filter(t => t.assignees.includes(currentUser.id) && isUpcoming(t.date, t.time))
+    .filter(t => t.assignees.includes(currentUser.id) && isUpcoming(t.date, t.time, t.end_date))
     .sort(compareTasks) 
     : [];
 
   const displayedListTasks = tasks
-    .filter(t => isUpcoming(t.date, t.time))
+    .filter(t => isUpcoming(t.date, t.time, t.end_date))
     .filter(t => listFilter === 'all' || (listFilter === 'mine' && currentUser && t.assignees.includes(currentUser.id)))
     .sort(compareTasks);
 
@@ -399,20 +419,31 @@ export default function App() {
 
   const handleSaveTask = async () => {
     if (!newTask.title || !newTask.date) return;
+
+    if (newTask.end_date && new Date(newTask.end_date) < new Date(newTask.date)) {
+      showModal('ข้อผิดพลาด', 'วันที่สิ้นสุด ต้องไม่ก่อนวันที่เริ่มต้น', 'error');
+      return;
+    }
     
     try {
       let currentTaskId = editingTaskId;
       const isNewTask = !editingTaskId;
 
+      const payload = {
+        title: newTask.title, 
+        department: newTask.department, 
+        description: newTask.description, 
+        date: newTask.date, 
+        end_date: newTask.end_date || null,
+        time: newTask.time || null, 
+        location: newTask.location
+      };
+
       if (editingTaskId) {
-        await supabase.from('tasks').update({
-          title: newTask.title, department: newTask.department, description: newTask.description, date: newTask.date, time: newTask.time || null, location: newTask.location
-        }).eq('id', editingTaskId);
+        await supabase.from('tasks').update(payload).eq('id', editingTaskId);
         await supabase.from('task_assignees').delete().eq('task_id', editingTaskId);
       } else {
-        const { data: insertedTask, error } = await supabase.from('tasks').insert({
-          title: newTask.title, department: newTask.department, description: newTask.description, date: newTask.date, time: newTask.time || null, location: newTask.location
-        }).select().single();
+        const { data: insertedTask, error } = await supabase.from('tasks').insert(payload).select().single();
         if (error) throw error;
         currentTaskId = insertedTask.id;
       }
@@ -421,7 +452,6 @@ export default function App() {
         const assigneeInserts = newTask.assignees.map(staff_id => ({ task_id: currentTaskId, staff_id }));
         await supabase.from('task_assignees').insert(assigneeInserts);
 
-        // 🌟 แก้ไข: ให้ส่งแจ้งเตือนทั้งตอน สร้างงานใหม่(create) และ แก้ไขงาน(update)
         const assignedStaffWithLine = newTask.assignees
           .map(id => staffList.find(s => s.id === id))
           .filter(staff => staff && staff.line_user_id);
@@ -431,11 +461,11 @@ export default function App() {
         if (lineUserIds.length > 0) {
           supabase.functions.invoke('notify-new-task', {
             body: {
-              task: newTask,
+              task: { ...newTask, endDate: newTask.end_date },
               userIds: lineUserIds,
               assignerName: currentUser.name,
               siteUrl: window.location.origin,
-              actionType: isNewTask ? 'create' : 'update' // <--- ส่งสถานะไปด้วย
+              actionType: isNewTask ? 'create' : 'update'
             }
           }).catch(err => console.error("Error invoking notify-new-task:", err));
         }
@@ -444,7 +474,7 @@ export default function App() {
       await fetchData();
       setIsModalOpen(false);
       setEditingTaskId(null);
-      setNewTask({ title: '', department: '', description: '', date: '', time: '', location: '', assignees: [] });
+      setNewTask({ title: '', department: '', description: '', date: '', end_date: '', time: '', location: '', assignees: [] });
       showModal('สำเร็จ', 'บันทึกกิจกรรมเรียบร้อยแล้ว', 'success');
     } catch (error) {
       console.error('Error saving task:', error);
@@ -453,7 +483,16 @@ export default function App() {
   };
 
   const handleEditTask = (task) => {
-    setNewTask({ title: task.title, department: task.department || '', description: task.description || '', date: task.date, time: task.time || '', location: task.location || '', assignees: task.assignees || [] });
+    setNewTask({ 
+      title: task.title, 
+      department: task.department || '', 
+      description: task.description || '', 
+      date: task.date, 
+      end_date: task.end_date || '',
+      time: task.time || '', 
+      location: task.location || '', 
+      assignees: task.assignees || [] 
+    });
     setEditingTaskId(task.id);
     setIsModalOpen(true);
   };
@@ -461,7 +500,6 @@ export default function App() {
   const handleDeleteTask = (id) => {
     showModal('ยืนยันการลบกิจกรรม', 'คุณต้องการลบกิจกรรมนี้ใช่หรือไม่?', 'confirm', async () => {
       
-      // 🌟 เพิ่ม: ส่งแจ้งเตือนยกเลิกกิจกรรมหาครูที่รับผิดชอบ ก่อนทำการลบข้อมูล
       const taskToDelete = tasks.find(t => t.id === id);
       if (taskToDelete && taskToDelete.assignees.length > 0) {
         const assignedStaffWithLine = taskToDelete.assignees
@@ -473,11 +511,11 @@ export default function App() {
         if (lineUserIds.length > 0) {
           supabase.functions.invoke('notify-new-task', {
             body: {
-              task: taskToDelete,
+              task: { ...taskToDelete, endDate: taskToDelete.end_date },
               userIds: lineUserIds,
               assignerName: currentUser.name,
               siteUrl: window.location.origin,
-              actionType: 'delete' // <--- ส่งสถานะยกเลิก
+              actionType: 'delete' 
             }
           }).catch(err => console.error("Error invoking notify-new-task:", err));
         }
@@ -486,7 +524,7 @@ export default function App() {
       await supabase.from('tasks').delete().eq('id', id);
       await fetchData();
       if (selectedDayTasksDate) {
-         const remainingTasksForDate = tasks.filter(t => t.id !== id && t.date === selectedDayTasksDate);
+         const remainingTasksForDate = tasks.filter(t => t.id !== id && isDateInTaskRange(selectedDayTasksDate, t.date, t.end_date));
          if(remainingTasksForDate.length <= 1) setSelectedDayTasksDate(null);
       }
       showModal('สำเร็จ', 'ลบกิจกรรมเรียบร้อยแล้ว', 'success');
@@ -494,7 +532,6 @@ export default function App() {
   };
 
   const handleLogin = async () => {
-    // นำรหัสผ่านที่กรอกมาเข้าฟังก์ชัน Hash ก่อนนำไปเปรียบเทียบกับในฐานข้อมูล
     const hashedPassword = await hashPassword(loginForm.password);
     const user = staffList.find(s => s.username === loginForm.username && s.password === hashedPassword);
     
@@ -521,7 +558,7 @@ export default function App() {
 
   const handleSaveStaff = async () => {
     if (!newStaff.name || !newStaff.username) return;
-    if (!editingStaffId && !newStaff.password) return; // ต้องมีรหัสผ่านตอนสร้างใหม่
+    if (!editingStaffId && !newStaff.password) return; 
     
     try {
       const staffData = {
@@ -531,7 +568,6 @@ export default function App() {
         username: newStaff.username
       };
 
-      // ถ้ามีการพิมพ์รหัสผ่านใหม่ ให้ทำการเข้ารหัส (Hash) ก่อนบันทึก
       if (newStaff.password) {
         staffData.password = await hashPassword(newStaff.password);
       }
@@ -563,18 +599,18 @@ export default function App() {
 
   const openNewTaskModal = () => {
     setEditingTaskId(null);
-    setNewTask({ title: '', department: '', description: '', date: '', time: '', location: '', assignees: [] });
+    setNewTask({ title: '', department: '', description: '', date: '', end_date: '', time: '', location: '', assignees: [] });
     setIsModalOpen(true);
   };
 
   const handleDayClick = (day) => {
     if(!day) return;
     const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const dayTasks = tasks.filter(t => t.date === dateStr);
+    const dayTasks = tasks.filter(t => isDateInTaskRange(dateStr, t.date, t.end_date));
     if (dayTasks.length > 0) {
       setSelectedDayTasksDate(dateStr);
     } else if (currentUser?.role === 'admin' || currentUser?.role === 'manager') {
-       setNewTask({ title: '', department: '', description: '', date: dateStr, time: '', location: '', assignees: [] });
+       setNewTask({ title: '', department: '', description: '', date: dateStr, end_date: '', time: '', location: '', assignees: [] });
        setIsModalOpen(true);
     }
   };
@@ -593,7 +629,7 @@ export default function App() {
   const getTasksForDate = (day) => {
     if (!day) return [];
     const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return tasks.filter(t => t.date === dateStr);
+    return tasks.filter(t => isDateInTaskRange(dateStr, t.date, t.end_date));
   };
 
   const getRoleLabel = (role) => {
@@ -700,18 +736,18 @@ export default function App() {
                            <div className="p-4 text-center text-sm text-gray-500">ไม่มีกิจกรรมที่กำลังจะมาถึง</div>
                         ) : (
                            paginatedNotifs.map(task => {
-                             const isToday = task.date === todayStr;
-                             const isTomorrow = task.date === tomorrowStr;
+                             const isToday = isDateInTaskRange(todayStr, task.date, task.end_date);
+                             const isTomorrow = isDateInTaskRange(tomorrowStr, task.date, task.end_date);
                              
                              return (
                              <div key={task.id} className={`p-3 border-b border-gray-50 hover:bg-blue-50/50 transition-colors cursor-pointer ${isToday ? 'bg-red-50/30' : isTomorrow ? 'bg-orange-50/30' : ''}`} onClick={() => { setIsNotifOpen(false); setSelectedDayTasksDate(task.date); setActiveTab('calendar'); }}>
                                 <div className="text-sm font-semibold text-gray-800 mb-1 flex items-center justify-between">
                                   <span className="truncate">{task.title}</span>
                                   {isToday && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded flex-shrink-0 ml-2">วันนี้</span>}
-                                  {isTomorrow && <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded flex-shrink-0 ml-2">พรุ่งนี้</span>}
+                                  {isTomorrow && !isToday && <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded flex-shrink-0 ml-2">พรุ่งนี้</span>}
                                 </div>
                                 <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
-                                  <div className="flex items-center gap-1"><Calendar className="w-3 h-3"/> {formatDateThai(task.date)}</div>
+                                  <div className="flex items-center gap-1"><Calendar className="w-3 h-3"/> {formatTaskDateRange(task.date, task.end_date)}</div>
                                   {task.time && <div className="flex items-center gap-1"><Clock className="w-3 h-3"/> {formatTimeThai(task.time)}</div>}
                                 </div>
                              </div>
@@ -911,6 +947,7 @@ export default function App() {
                           )}
                         </div>
                         
+                        {/* Task Dots for Mobile */}
                         <div className="flex flex-wrap gap-1 sm:hidden mt-1">
                            {dayTasks.map((task, i) => i < 3 && (
                              <div key={task.id} className="w-2 h-2 rounded-full bg-blue-500"></div>
@@ -918,6 +955,7 @@ export default function App() {
                            {dayTasks.length > 3 && <span className="text-[8px] text-gray-400">+{dayTasks.length-3}</span>}
                         </div>
 
+                        {/* Task List for Desktop */}
                         <div className="hidden sm:flex flex-1 overflow-y-auto custom-scrollbar flex-col space-y-1.5 pr-1">
                           {dayTasks.map(task => (
                             <div key={task.id} className="text-[11px] p-1.5 rounded-md border bg-blue-50 text-blue-700 border-blue-200 transition-opacity truncate shadow-sm font-medium flex justify-between" title={task.title}>
@@ -935,7 +973,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Task List Tab */}
+        {/* Task List Tab (รายการกิจกรรม) */}
         {activeTab === 'list' && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="p-4 border-b border-gray-200 bg-gray-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -981,7 +1019,7 @@ export default function App() {
                     {task.description && <p className="text-sm text-gray-600 mb-3 line-clamp-2">{task.description}</p>}
                     
                     <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-gray-500">
-                      <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-blue-500" /> {formatDateThai(task.date)}</div>
+                      <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-blue-500" /> {formatTaskDateRange(task.date, task.end_date)}</div>
                       {task.time && <div className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-orange-400" /> {formatTimeThai(task.time)}</div>}
                       {task.location && <div className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-red-400" /> {task.location}</div>}
                     </div>
@@ -1036,7 +1074,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Staff Management Tab */}
+        {/* Staff Tab (จัดการบุคลากร - Admin Only) */}
         {activeTab === 'staff' && currentUser?.role === 'admin' && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="p-4 border-b border-gray-200 bg-gray-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -1065,13 +1103,9 @@ export default function App() {
                     <tr key={staff.id} className="hover:bg-blue-50/30 transition-colors group">
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3">
-                          {staff.line_picture_url ? (
-                            <img src={staff.line_picture_url} alt={staff.name} className="w-8 h-8 rounded-full object-cover border border-blue-200 shadow-sm shrink-0" />
-                          ) : (
-                            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold border border-blue-200 shadow-sm shrink-0">
-                              {getInitials(staff.name)}
-                            </div>
-                          )}
+                          <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold border border-blue-200 shadow-sm shrink-0">
+                            {getInitials(staff.name)}
+                          </div>
                           <span className="font-medium text-gray-800">{staff.name}</span>
                         </div>
                       </td>
@@ -1081,16 +1115,11 @@ export default function App() {
                           {getRoleLabel(staff.role)}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-gray-600 text-sm">{staff.username}</td>
+                      <td className="py-3 px-4 text-gray-600 font-mono text-xs">{staff.username}</td>
                       <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button 
-                            onClick={() => { 
-                              setEditingStaffId(staff.id); 
-                              // ไม่ดึงรหัสผ่านเก่ามาแสดง เพื่อความปลอดภัย และป้องกันการเข้ารหัสซ้ำ
-                              setNewStaff({ ...staff, password: '' }); 
-                              setIsStaffModalOpen(true); 
-                            }} 
+                            onClick={() => { setEditingStaffId(staff.id); setNewStaff(staff); setIsStaffModalOpen(true); }} 
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="แก้ไข"
                           >
                             <Edit className="w-4 h-4" />
@@ -1112,7 +1141,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Departments Tab */}
+        {/* Department Tab (จัดการฝ่าย - Admin Only) */}
         {activeTab === 'departments' && currentUser?.role === 'admin' && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="p-4 border-b border-gray-200 bg-gray-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -1170,7 +1199,7 @@ export default function App() {
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button 
                                 onClick={() => { setEditingDept(dept); setEditDeptInput(dept); }} 
                                 className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="แก้ไข"
@@ -1206,7 +1235,7 @@ export default function App() {
 
       {/* --- Modals (Popups) --- */}
 
-      {/* 1. Daily Tasks Popup Modal */}
+      {/* 1. Daily Tasks Popup Modal (แสดงเมื่อคลิกที่วันที่) */}
       {selectedDayTasksDate && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-40 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col overflow-hidden max-h-[90vh]" style={{ animation: 'slideUpFade 0.2s ease-out' }}>
@@ -1218,11 +1247,11 @@ export default function App() {
             </div>
             
             <div className="p-1 overflow-y-auto custom-scrollbar">
-               {tasks.filter(t => t.date === selectedDayTasksDate).length === 0 ? (
+               {tasks.filter(t => isDateInTaskRange(selectedDayTasksDate, t.date, t.end_date)).length === 0 ? (
                  <div className="p-8 text-center text-gray-500">ไม่มีกิจกรรมในวันนี้</div>
                ) : (
                  <div className="divide-y divide-gray-100">
-                   {tasks.filter(t => t.date === selectedDayTasksDate)
+                   {tasks.filter(t => isDateInTaskRange(selectedDayTasksDate, t.date, t.end_date))
                          .sort((a,b) => (a.time || '23:59').localeCompare(b.time || '23:59'))
                          .map(task => (
                      <div key={task.id} className="p-4 hover:bg-gray-50 transition-colors">
@@ -1240,6 +1269,7 @@ export default function App() {
                         
                         <div className="flex flex-col gap-2">
                            <div className="flex flex-wrap gap-4">
+                             <div className="text-xs text-gray-500 flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-blue-500" /> วันที่: {formatTaskDateRange(task.date, task.end_date)}</div>
                              {task.time && <div className="text-xs text-gray-500 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-orange-400" /> เวลา: {formatTimeThai(task.time)}</div>}
                              {task.location && <div className="text-xs text-gray-500 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-red-400" /> สถานที่: {task.location}</div>}
                            </div>
@@ -1281,6 +1311,7 @@ export default function App() {
                            )}
                         </div>
 
+                        {/* Admin/Manager controls inside Day Modal */}
                         {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
                            <div className="mt-4 flex justify-end gap-2 border-t border-gray-100 pt-3">
                               <button onClick={() => { setSelectedDayTasksDate(null); handleEditTask(task); }} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
@@ -1304,6 +1335,7 @@ export default function App() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-visible flex flex-col max-h-[90vh]">
+            
             <div className="flex items-center justify-between p-5 border-b border-gray-100">
               <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
                 {editingTaskId ? <Edit className="w-5 h-5 text-blue-600" /> : <Plus className="w-5 h-5 text-blue-600" />} 
@@ -1335,9 +1367,16 @@ export default function App() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่ <span className="text-red-500">*</span></label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">วันที่เริ่มต้น <span className="text-red-500">*</span></label>
                   <input 
                     type="date" value={newTask.date} onChange={e => setNewTask({...newTask, date: e.target.value})}
+                    className="w-full border border-gray-300 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all shadow-sm text-gray-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">ถึงวันที่ (กรณีจัดหลายวัน)</label>
+                  <input 
+                    type="date" min={newTask.date} value={newTask.end_date || ''} onChange={e => setNewTask({...newTask, end_date: e.target.value})}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all shadow-sm text-gray-700"
                   />
                 </div>
@@ -1351,7 +1390,7 @@ export default function App() {
                     className="w-full border border-gray-300 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all shadow-sm text-gray-700"
                   />
                 </div>
-                <div className="sm:col-span-2">
+                <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">ฝ่าย/งานที่รับผิดชอบ</label>
                   <div className="relative">
                     <select 
@@ -1379,42 +1418,69 @@ export default function App() {
                 />
               </div>
 
+              {/* Custom Tagify-like Input for Assignees */}
               <div className="relative">
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">ผู้รับผิดชอบ (เลือกได้หลายคน)</label>
+                
+                {/* Simulated Input Box */}
                 <div 
                   className="w-full border border-gray-300 rounded-xl p-1.5 min-h-[46px] bg-white flex flex-wrap gap-1.5 cursor-text focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all shadow-sm"
                   onClick={() => setIsDropdownOpen(true)}
                 >
+                  {/* Selected Tags */}
                   {newTask.assignees.map(id => {
                     const staff = staffList.find(s => s.id === id);
                     if (!staff) return null;
                     return (
                       <span key={id} className="bg-blue-50 text-blue-700 border border-blue-200 text-xs px-2.5 py-1 rounded-lg flex items-center gap-1.5 font-medium">
-                        {staff.line_picture_url ? (
-                          <img src={staff.line_picture_url} alt={staff.name} className="w-4 h-4 rounded-full object-cover" />
-                        ) : null}
                         {staff.name}
-                        <button onClick={(e) => removeAssignee(e, id)} className="hover:bg-blue-200 rounded-full p-0.5 text-blue-500 hover:text-blue-800 transition-colors">
+                        <button 
+                          onClick={(e) => removeAssignee(e, id)}
+                          className="hover:bg-blue-200 rounded-full p-0.5 text-blue-500 hover:text-blue-800 transition-colors"
+                        >
                           <X className="w-3 h-3" />
                         </button>
                       </span>
                     );
                   })}
                   
+                  {/* Search Input Trigger */}
                   <div className="flex-1 min-w-[100px]">
-                    <input type="text" readOnly placeholder={newTask.assignees.length === 0 ? "คลิกเพื่อเลือกผู้รับผิดชอบ..." : ""} className="w-full bg-transparent border-none outline-none text-sm py-1 px-2 cursor-pointer text-gray-500" />
+                    <input
+                      type="text"
+                      readOnly
+                      placeholder={newTask.assignees.length === 0 ? "คลิกเพื่อเลือกผู้รับผิดชอบ..." : ""}
+                      className="w-full bg-transparent border-none outline-none text-sm py-1 px-2 cursor-pointer text-gray-500"
+                    />
                   </div>
                 </div>
 
+                {/* Pop-up Dropdown (Opens Upwards) */}
                 {isDropdownOpen && (
-                  <div ref={dropdownRef} className="absolute bottom-full left-0 w-full mb-2 bg-white border border-gray-200 rounded-xl shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.1),0_0_5px_rgba(0,0,0,0.05)] z-50 overflow-hidden flex flex-col transform transition-all opacity-100 translate-y-0" style={{ animation: 'slideUpFade 0.2s ease-out' }}>
+                  <div 
+                    ref={dropdownRef}
+                    className="absolute bottom-full left-0 w-full mb-2 bg-white border border-gray-200 rounded-xl shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.1),0_0_5px_rgba(0,0,0,0.05)] z-50 overflow-hidden flex flex-col transform transition-all opacity-100 translate-y-0"
+                    style={{ animation: 'slideUpFade 0.2s ease-out' }}
+                  >
                     <div className="p-2 border-b border-gray-100 bg-gray-50/50 flex items-center gap-2">
                       <Search className="w-4 h-4 text-gray-400" />
-                      <input type="text" autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="พิมพ์ค้นหารายชื่อ หรือ แผนก..." className="bg-transparent border-none outline-none text-sm w-full font-medium" />
+                      <input 
+                        type="text"
+                        autoFocus
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="พิมพ์ค้นหารายชื่อ หรือ แผนก..."
+                        className="bg-transparent border-none outline-none text-sm w-full font-medium"
+                      />
                     </div>
                     
                     <div className="max-h-56 overflow-y-auto custom-scrollbar p-1">
-                      <div onClick={handleToggleAllAssignees} className="flex items-center gap-3 p-2 hover:bg-blue-50 rounded-lg cursor-pointer transition-colors group border-b border-gray-100 mb-1">
+                      
+                      {/* ปุ่มเลือกทั้งหมด */}
+                      <div 
+                        onClick={handleToggleAllAssignees}
+                        className="flex items-center gap-3 p-2 hover:bg-blue-50 rounded-lg cursor-pointer transition-colors group border-b border-gray-100 mb-1"
+                      >
                         <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${newTask.assignees.length === staffList.length ? 'bg-blue-600 border-blue-600' : 'border-gray-300 group-hover:border-blue-400'}`}>
                           {newTask.assignees.length === staffList.length && <Check className="w-3 h-3 text-white" />}
                         </div>
@@ -1429,17 +1495,17 @@ export default function App() {
                         filteredStaff.map(staff => {
                           const isSelected = newTask.assignees.includes(staff.id);
                           return (
-                            <div key={staff.id} onClick={() => toggleAssignee(staff.id)} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors group">
+                            <div 
+                              key={staff.id}
+                              onClick={() => toggleAssignee(staff.id)}
+                              className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors group"
+                            >
                               <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 group-hover:border-blue-400'}`}>
                                 {isSelected && <Check className="w-3 h-3 text-white" />}
                               </div>
-                              {staff.line_picture_url ? (
-                                <img src={staff.line_picture_url} alt={staff.name} className="w-7 h-7 rounded-full object-cover border border-blue-200 shrink-0" />
-                              ) : (
-                                <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold border border-blue-200 shrink-0">
-                                  {getInitials(staff.name)}
-                                </div>
-                              )}
+                              <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold border border-blue-200">
+                                {getInitials(staff.name)}
+                              </div>
                               <div className="flex flex-col">
                                 <span className="text-sm font-medium text-gray-800">{staff.name}</span>
                                 <span className="text-[10px] text-gray-500">{staff.department}</span>
@@ -1455,9 +1521,18 @@ export default function App() {
             </div>
             
             <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 rounded-b-2xl">
-              <button onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors">ยกเลิก</button>
-              <button onClick={handleSaveTask} disabled={!newTask.title || !newTask.date} className="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">บันทึกกิจกรรม</button>
+              <button onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors">
+                ยกเลิก
+              </button>
+              <button 
+                onClick={handleSaveTask}
+                disabled={!newTask.title || !newTask.date}
+                className="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+              >
+                บันทึกกิจกรรม
+              </button>
             </div>
+            
           </div>
         </div>
       )}
@@ -1468,7 +1543,7 @@ export default function App() {
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl flex flex-col overflow-hidden" style={{ animation: 'slideUpFade 0.2s ease-out' }}>
             <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gray-50/50">
               <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                <Lock className="w-5 h-5 text-blue-600" /> เข้าสู่ระบบ
+                <LogIn className="w-5 h-5 text-blue-600" /> เข้าสู่ระบบ
               </h2>
               <button onClick={() => setIsLoginModalOpen(false)} className="text-gray-400 hover:bg-gray-200 p-1.5 rounded-lg transition-colors"><X className="w-5 h-5" /></button>
             </div>
@@ -1506,7 +1581,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 4. Staff Management Modal */}
+      {/* 4. Staff Management Modal (Admin Only) */}
       {isStaffModalOpen && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl flex flex-col overflow-hidden my-auto" style={{ animation: 'slideUpFade 0.2s ease-out' }}>
@@ -1526,7 +1601,10 @@ export default function App() {
                  <div>
                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">ฝ่าย/แผนก</label>
                    <div className="relative">
-                     <select value={newStaff.department} onChange={e => setNewStaff({...newStaff, department: e.target.value})} className="w-full appearance-none border border-gray-300 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-white hover:border-blue-400 cursor-pointer text-gray-700">
+                     <select 
+                       value={newStaff.department} onChange={e => setNewStaff({...newStaff, department: e.target.value})} 
+                       className="w-full appearance-none border border-gray-300 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-white hover:border-blue-400 cursor-pointer text-gray-700"
+                     >
                        <option value="">-- เลือกฝ่าย --</option>
                        {departments.map(dept => (
                          <option key={dept} value={dept}>{dept}</option>
@@ -1540,10 +1618,13 @@ export default function App() {
                  <div>
                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">สิทธิ์การใช้งาน <span className="text-red-500">*</span></label>
                    <div className="relative">
-                     <select value={newStaff.role} onChange={e => setNewStaff({...newStaff, role: e.target.value})} className="w-full appearance-none border border-gray-300 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white hover:border-blue-400 cursor-pointer text-gray-700">
-                        <option value="staff">ครูและบุคลากร (ดูปฏิทิน)</option>
+                     <select 
+                       value={newStaff.role} onChange={e => setNewStaff({...newStaff, role: e.target.value})} 
+                       className="w-full appearance-none border border-gray-300 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white hover:border-blue-400 cursor-pointer text-gray-700"
+                     >
+                        <option value="staff">บุคลากรทั่วไป (ดูปฏิทิน)</option>
                         <option value="manager">หัวหน้าฝ่าย (สร้างกิจกรรมได้)</option>
-                        <option value="admin">ผู้ดูแลระบบ (จัดการได้ทุกอย่าง)</option>
+                        <option value="admin">ผู้บริหารระบบ (จัดการได้ทุกอย่าง)</option>
                      </select>
                      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
                        <ChevronDown className="w-4 h-4" />
@@ -1554,14 +1635,14 @@ export default function App() {
               
               <div className="border-t border-gray-200 pt-4 mt-2">
                  <h3 className="text-sm font-bold text-blue-800 mb-3">ข้อมูลสำหรับการเข้าสู่ระบบ</h3>
-                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                 <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1.5">Username <span className="text-red-500">*</span></label>
                       <input type="text" value={newStaff.username} onChange={e => setNewStaff({...newStaff, username: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" placeholder="เช่น kru.jaidee" />
                     </div>
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password {!editingStaffId && <span className="text-red-500">*</span>}</label>
-                      <input type="text" value={newStaff.password} onChange={e => setNewStaff({...newStaff, password: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" placeholder={editingStaffId ? "เว้นว่างไว้หากไม่ต้องการเปลี่ยน" : "ตั้งรหัสผ่าน"} />
+                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password <span className="text-red-500">*</span></label>
+                      <input type="text" value={newStaff.password} onChange={e => setNewStaff({...newStaff, password: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" placeholder={editingStaffId ? "เว้นว่างไว้หากไม่เปลี่ยน" : "ตั้งรหัสผ่าน"} />
                     </div>
                  </div>
               </div>
