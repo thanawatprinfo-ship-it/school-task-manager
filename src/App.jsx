@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Plus, Users, X, MapPin, Check, ChevronLeft, ChevronRight, List, LogOut, Edit, Trash2, UserPlus, Search, Bell, Layers, ChevronDown, Clock, MessageCircle, CheckCircle, AlertCircle, Info, HelpCircle, Sprout, Lock, Eye, EyeOff, Link2, Link2Off } from 'lucide-react';
+import { Calendar, Plus, Users, X, MapPin, Check, ChevronLeft, ChevronRight, List, LogOut, Edit, Trash2, UserPlus, Search, Bell, Layers, ChevronDown, Clock, MessageCircle, CheckCircle, AlertCircle, Info, HelpCircle, Sprout, Lock, Eye, EyeOff, Link2, Link2Off, LogIn } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 // ฟังก์ชันแปลงวันที่เป็นภาษาไทย
@@ -532,6 +532,11 @@ export default function App() {
   };
 
   const handleLogin = async () => {
+    if (!loginForm.username || !loginForm.password) {
+      showModal('ข้อมูลไม่ครบ', 'กรุณากรอก Username และ Password ให้ครบถ้วน', 'error');
+      return;
+    }
+    
     const hashedPassword = await hashPassword(loginForm.password);
     const user = staffList.find(s => s.username === loginForm.username && s.password === hashedPassword);
     
@@ -1103,9 +1108,13 @@ export default function App() {
                     <tr key={staff.id} className="hover:bg-blue-50/30 transition-colors group">
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold border border-blue-200 shadow-sm shrink-0">
-                            {getInitials(staff.name)}
-                          </div>
+                          {staff.line_picture_url ? (
+                            <img src={staff.line_picture_url} alt={staff.name} className="w-8 h-8 rounded-full object-cover border border-blue-200 shadow-sm shrink-0" />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold border border-blue-200 shadow-sm shrink-0">
+                              {getInitials(staff.name)}
+                            </div>
+                          )}
                           <span className="font-medium text-gray-800">{staff.name}</span>
                         </div>
                       </td>
