@@ -22,6 +22,14 @@ const getInitials = (name) => {
   return cleanName.charAt(0);
 };
 
+// ฟังก์ชันสำหรับเข้ารหัสรหัสผ่าน (Hash) ด้วย SHA-256
+const hashPassword = async (password) => {
+  const msgBuffer = new TextEncoder().encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
 export default function App() {
   const [loading, setLoading] = useState(true);
   const [isLineVerifying, setIsLineVerifying] = useState(false);
@@ -485,8 +493,11 @@ export default function App() {
     });
   };
 
-  const handleLogin = () => {
-    const user = staffList.find(s => s.username === loginForm.username && s.password === loginForm.password);
+  const handleLogin = async () => {
+    // นำรหัสผ่านที่กรอกมาเข้าฟังก์ชัน Hash ก่อนนำไปเปรียบเทียบกับในฐานข้อมูล
+    const hashedPassword = await hashPassword(loginForm.password);
+    const user = staffList.find(s => s.username === loginForm.username && s.password === hashedPassword);
+    
     if (user) {
       setCurrentUser(user);
       localStorage.setItem('schoolTaskUser', JSON.stringify(user));
@@ -509,17 +520,28 @@ export default function App() {
   };
 
   const handleSaveStaff = async () => {
-    if (!newStaff.name || !newStaff.username || !newStaff.password) return;
+    if (!newStaff.name || !newStaff.username) return;
+    if (!editingStaffId && !newStaff.password) return; // ต้องมีรหัสผ่านตอนสร้างใหม่
+    
     try {
-      if (editingStaffId) {
-        await supabase.from('staff').update({
-          name: newStaff.name, department: newStaff.department, role: newStaff.role, username: newStaff.username, password: newStaff.password
-        }).eq('id', editingStaffId);
-      } else {
-        await supabase.from('staff').insert([{
-          name: newStaff.name, department: newStaff.department, role: newStaff.role, username: newStaff.username, password: newStaff.password
-        }]);
+      const staffData = {
+        name: newStaff.name,
+        department: newStaff.department,
+        role: newStaff.role,
+        username: newStaff.username
+      };
+
+      // ถ้ามีการพิมพ์รหัสผ่านใหม่ ให้ทำการเข้ารหัส (Hash) ก่อนบันทึก
+      if (newStaff.password) {
+        staffData.password = await hashPassword(newStaff.password);
       }
+
+      if (editingStaffId) {
+        await supabase.from('staff').update(staffData).eq('id', editingStaffId);
+      } else {
+        await supabase.from('staff').insert([staffData]);
+      }
+      
       await fetchData();
       setIsStaffModalOpen(false);
       setEditingStaffId(null);
@@ -1063,7 +1085,12 @@ export default function App() {
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <button 
-                            onClick={() => { setEditingStaffId(staff.id); setNewStaff(staff); setIsStaffModalOpen(true); }} 
+                            onClick={() => { 
+                              setEditingStaffId(staff.id); 
+                              // ไม่ดึงรหัสผ่านเก่ามาแสดง เพื่อความปลอดภัย และป้องกันการเข้ารหัสซ้ำ
+                              setNewStaff({ ...staff, password: '' }); 
+                              setIsStaffModalOpen(true); 
+                            }} 
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="แก้ไข"
                           >
                             <Edit className="w-4 h-4" />
@@ -1173,7 +1200,7 @@ export default function App() {
       {/* Footer */}
       <footer className="bg-white border-t border-gray-200 py-6 mt-auto">
         <div className="max-w-6xl mx-auto px-4 text-center">
-          <p className="text-sm text-gray-500 font-medium">Copyright &copy; {new Date().getFullYear()+543} - นายธนาวัฒน์ ประพันธ์</p>
+           <p className="text-sm text-gray-500 font-medium">Copyright &copy; {new Date().getFullYear()+543} - นายธนาวัฒน์ ประพันธ์</p>
         </div>
       </footer>
 
@@ -1533,15 +1560,15 @@ export default function App() {
                       <input type="text" value={newStaff.username} onChange={e => setNewStaff({...newStaff, username: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" placeholder="เช่น kru.jaidee" />
                     </div>
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password <span className="text-red-500">*</span></label>
-                      <input type="text" value={newStaff.password} onChange={e => setNewStaff({...newStaff, password: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" placeholder="ตั้งรหัสผ่าน" />
+                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password {!editingStaffId && <span className="text-red-500">*</span>}</label>
+                      <input type="text" value={newStaff.password} onChange={e => setNewStaff({...newStaff, password: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" placeholder={editingStaffId ? "เว้นว่างไว้หากไม่ต้องการเปลี่ยน" : "ตั้งรหัสผ่าน"} />
                     </div>
                  </div>
               </div>
             </div>
             <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 rounded-b-2xl">
               <button onClick={() => setIsStaffModalOpen(false)} className="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors">ยกเลิก</button>
-              <button onClick={handleSaveStaff} disabled={!newStaff.name || !newStaff.username || !newStaff.password} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm">บันทึกข้อมูล</button>
+              <button onClick={handleSaveStaff} disabled={!newStaff.name || !newStaff.username || (!editingStaffId && !newStaff.password)} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm">บันทึกข้อมูล</button>
             </div>
           </div>
         </div>
