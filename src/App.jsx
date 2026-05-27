@@ -413,23 +413,23 @@ export default function App() {
         const assigneeInserts = newTask.assignees.map(staff_id => ({ task_id: currentTaskId, staff_id }));
         await supabase.from('task_assignees').insert(assigneeInserts);
 
-        if (isNewTask) {
-          const assignedStaffWithLine = newTask.assignees
-            .map(id => staffList.find(s => s.id === id))
-            .filter(staff => staff && staff.line_user_id);
-          
-          const lineUserIds = assignedStaffWithLine.map(staff => staff.line_user_id);
+        // 🌟 แก้ไข: ให้ส่งแจ้งเตือนทั้งตอน สร้างงานใหม่(create) และ แก้ไขงาน(update)
+        const assignedStaffWithLine = newTask.assignees
+          .map(id => staffList.find(s => s.id === id))
+          .filter(staff => staff && staff.line_user_id);
+        
+        const lineUserIds = assignedStaffWithLine.map(staff => staff.line_user_id);
 
-          if (lineUserIds.length > 0) {
-            supabase.functions.invoke('notify-new-task', {
-              body: {
-                task: newTask,
-                userIds: lineUserIds,
-                assignerName: currentUser.name,
-                siteUrl: window.location.origin
-              }
-            }).catch(err => console.error("Error invoking notify-new-task:", err));
-          }
+        if (lineUserIds.length > 0) {
+          supabase.functions.invoke('notify-new-task', {
+            body: {
+              task: newTask,
+              userIds: lineUserIds,
+              assignerName: currentUser.name,
+              siteUrl: window.location.origin,
+              actionType: isNewTask ? 'create' : 'update' // <--- ส่งสถานะไปด้วย
+            }
+          }).catch(err => console.error("Error invoking notify-new-task:", err));
         }
       }
 
@@ -452,6 +452,29 @@ export default function App() {
 
   const handleDeleteTask = (id) => {
     showModal('ยืนยันการลบกิจกรรม', 'คุณต้องการลบกิจกรรมนี้ใช่หรือไม่?', 'confirm', async () => {
+      
+      // 🌟 เพิ่ม: ส่งแจ้งเตือนยกเลิกกิจกรรมหาครูที่รับผิดชอบ ก่อนทำการลบข้อมูล
+      const taskToDelete = tasks.find(t => t.id === id);
+      if (taskToDelete && taskToDelete.assignees.length > 0) {
+        const assignedStaffWithLine = taskToDelete.assignees
+          .map(staffId => staffList.find(s => s.id === staffId))
+          .filter(staff => staff && staff.line_user_id);
+        
+        const lineUserIds = assignedStaffWithLine.map(staff => staff.line_user_id);
+
+        if (lineUserIds.length > 0) {
+          supabase.functions.invoke('notify-new-task', {
+            body: {
+              task: taskToDelete,
+              userIds: lineUserIds,
+              assignerName: currentUser.name,
+              siteUrl: window.location.origin,
+              actionType: 'delete' // <--- ส่งสถานะยกเลิก
+            }
+          }).catch(err => console.error("Error invoking notify-new-task:", err));
+        }
+      }
+
       await supabase.from('tasks').delete().eq('id', id);
       await fetchData();
       if (selectedDayTasksDate) {

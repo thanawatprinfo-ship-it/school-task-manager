@@ -13,34 +13,48 @@ serve(async (req) => {
   }
 
   try {
-    // รับค่า siteUrl เพิ่มเติมจากหน้าบ้าน เพื่อนำไปทำปุ่มลิงก์
-    const { task, userIds, assignerName, siteUrl } = await req.json();
+    // เพิ่มรับค่า actionType ('create', 'update', 'delete')
+    const { task, userIds, assignerName, siteUrl, actionType = 'create' } = await req.json();
 
     if (!task || !userIds || userIds.length === 0) {
       return new Response(JSON.stringify({ message: "No data or users to notify" }), { headers: corsHeaders });
     }
 
-    // จัดรูปแบบวันที่ให้เป็น "01 มิ.ย. 2569" เหมือนกันทุกการแจ้งเตือน
     const dateObj = new Date(task.date);
     const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
     const dayTwoDigits = String(dateObj.getDate()).padStart(2, '0');
     const formattedDate = `${dayTwoDigits} ${thaiMonths[dateObj.getMonth()]} ${dateObj.getFullYear() + 543}`;
     const formattedTime = task.time ? `${task.time.substring(0, 5)} น.` : 'ไม่ระบุ';
 
-    // โครงสร้างการ์ด Flex Message ใหม่
+    // 🎨 กำหนดสีและข้อความตามการกระทำ (actionType)
+    let headerColor = "#2563EB"; // สีน้ำเงินเริ่มต้น (สร้างใหม่)
+    let headerText = "📢 มอบหมายกิจกรรมใหม่";
+    let altTextPrefix = "📢 มีกิจกรรมใหม่:";
+
+    if (actionType === 'update') {
+      headerColor = "#F59E0B"; // สีส้ม (แก้ไข)
+      headerText = "✏️ แจ้งอัปเดตข้อมูลกิจกรรม";
+      altTextPrefix = "✏️ อัปเดตกิจกรรม:";
+    } else if (actionType === 'delete') {
+      headerColor = "#EF4444"; // สีแดง (ยกเลิก/ลบ)
+      headerText = "❌ แจ้งยกเลิกกิจกรรม";
+      altTextPrefix = "❌ ยกเลิกกิจกรรม:";
+    }
+
+    // โครงสร้าง Flex Message
     const flexMessage = {
       type: "flex",
-      altText: `📢 มีกิจกรรมใหม่: ${task.title}`,
+      altText: `${altTextPrefix} ${task.title}`,
       contents: {
         type: "bubble",
         size: "mega",
         header: {
           type: "box",
           layout: "vertical",
-          backgroundColor: "#2563EB",
+          backgroundColor: headerColor, // เปลี่ยนสีตามสถานะ
           paddingAll: "xl",
           contents: [
-            { type: "text", text: "📢 มอบหมายกิจกรรมใหม่", color: "#FFFFFF", weight: "bold", size: "md" }
+            { type: "text", text: headerText, color: "#FFFFFF", weight: "bold", size: "md" }
           ]
         },
         body: {
@@ -49,7 +63,8 @@ serve(async (req) => {
           spacing: "md",
           paddingAll: "xl",
           contents: [
-            { type: "text", text: task.title, weight: "bold", size: "xl", wrap: true, color: "#1f2937" },
+            // ถ้ายกเลิก ให้ขีดฆ่าชื่อกิจกรรม
+            { type: "text", text: task.title, weight: "bold", size: "xl", wrap: true, color: actionType === 'delete' ? "#9ca3af" : "#1f2937", decoration: actionType === 'delete' ? "line-through" : "none" },
             { type: "separator", margin: "md" },
             {
               type: "box",
@@ -59,23 +74,22 @@ serve(async (req) => {
               contents: [
                 { type: "box", layout: "baseline", spacing: "sm", contents: [
                   { type: "text", text: "📅 วันที่:", color: "#9ca3af", size: "sm", flex: 2 },
-                  { type: "text", text: formattedDate, wrap: true, color: "#4b5563", size: "sm", flex: 5, weight: "bold" }
+                  { type: "text", text: formattedDate, wrap: true, color: "#4b5563", size: "sm", flex: 5, weight: "bold", decoration: actionType === 'delete' ? "line-through" : "none" }
                 ]},
                 { type: "box", layout: "baseline", spacing: "sm", contents: [
                   { type: "text", text: "⏰ เวลา:", color: "#9ca3af", size: "sm", flex: 2 },
-                  { type: "text", text: formattedTime, wrap: true, color: "#4b5563", size: "sm", flex: 5, weight: "bold" }
+                  { type: "text", text: formattedTime, wrap: true, color: "#4b5563", size: "sm", flex: 5, weight: "bold", decoration: actionType === 'delete' ? "line-through" : "none" }
                 ]},
                 { type: "box", layout: "baseline", spacing: "sm", contents: [
                   { type: "text", text: "📍 สถานที่:", color: "#9ca3af", size: "sm", flex: 2 },
-                  { type: "text", text: task.location || 'ไม่ระบุ', wrap: true, color: "#4b5563", size: "sm", flex: 5 }
+                  { type: "text", text: task.location || 'ไม่ระบุ', wrap: true, color: "#4b5563", size: "sm", flex: 5, decoration: actionType === 'delete' ? "line-through" : "none" }
                 ]},
                 { type: "box", layout: "baseline", spacing: "sm", contents: [
-                  { type: "text", text: "👤 มอบหมายโดย:", color: "#9ca3af", size: "sm", flex: 2 }, // เปลี่ยนหัวข้อตามต้องการ
+                  { type: "text", text: actionType === 'delete' ? "👤 ยกเลิกโดย:" : "👤 มอบหมายโดย:", color: "#9ca3af", size: "sm", flex: 2 },
                   { type: "text", text: assignerName, wrap: true, color: "#4b5563", size: "sm", flex: 5 }
                 ]}
               ]
             }
-            // ตัดส่วนรายละเอียดเพิ่มเติม (Description) ออกเรียบร้อยเพื่อให้มากดอ่านในระบบ
           ]
         },
         footer: {
@@ -83,16 +97,19 @@ serve(async (req) => {
           layout: "vertical",
           backgroundColor: "#f9fafb",
           paddingAll: "md",
-          contents: [
+          contents: actionType === 'delete' ? [
+            // ถ้ายกเลิก ไม่ต้องมีปุ่มลิงก์ ให้แสดงข้อความแทน
+            { type: "text", text: "กิจกรรมนี้ถูกยกเลิกแล้ว", color: "#EF4444", size: "sm", align: "center", weight: "bold" }
+          ] : [
             {
               type: "button",
               style: "primary",
-              color: "#2563EB",
+              color: headerColor, // เปลี่ยนสีปุ่มให้ตรงกับ Header
               height: "sm",
               action: {
                 type: "uri",
                 label: "รายละเอียดกิจกรรม",
-                uri: siteUrl || "https://school-task-manager-tau.vercel.app/" // ลิงก์ปลายทางเปิดหน้าเว็บระบบงาน
+                uri: siteUrl || "https://line.me"
               }
             }
           ]
