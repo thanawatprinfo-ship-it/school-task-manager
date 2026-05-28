@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Calendar, Plus, Users, X, MapPin, Check, ChevronLeft, ChevronRight, List, LogOut, Edit, Trash2, UserPlus, Search, Bell, Layers, ChevronDown, Clock, MessageCircle, CheckCircle, AlertCircle, Info, HelpCircle, Sprout, Lock, Eye, EyeOff, Link2, Link2Off, LogIn } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -102,6 +102,7 @@ export default function App() {
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
   const [editingStaffId, setEditingStaffId] = useState(null);
   const [newStaff, setNewStaff] = useState({ name: '', department: '', role: 'staff', username: '', password: '' });
+  const [showStaffPassword, setShowStaffPassword] = useState(false); // เพิ่ม State ควบคุมการแสดงรหัสผ่านบุคลากร
 
   // --- Department Management State ---
   const [departments, setDepartments] = useState([]);
@@ -321,21 +322,21 @@ export default function App() {
     .filter(t => listFilter === 'all' || (listFilter === 'mine' && currentUser && t.assignees.includes(currentUser.id)))
     .sort(compareTasks);
 
-  useEffect(() => {
-    const totalPagesTasks = Math.ceil(displayedListTasks.length / ITEMS_PER_PAGE);
-    if (currentPageTasks > totalPagesTasks && totalPagesTasks > 0) setCurrentPageTasks(totalPagesTasks);
-    
-    const totalPagesStaff = Math.ceil(staffList.length / ITEMS_PER_PAGE);
-    if (currentPageStaff > totalPagesStaff && totalPagesStaff > 0) setCurrentPageStaff(totalPagesStaff);
-    
-    const totalPagesDepts = Math.ceil(departments.length / ITEMS_PER_PAGE);
-    if (currentPageDepts > totalPagesDepts && totalPagesDepts > 0) setCurrentPageDepts(totalPagesDepts);
-  }, [displayedListTasks.length, staffList.length, departments.length, currentPageTasks, currentPageStaff, currentPageDepts]);
-
   const filteredStaff = staffList.filter(staff => 
     staff.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     staff.department?.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  useEffect(() => {
+    const totalPagesTasks = Math.ceil(displayedListTasks.length / ITEMS_PER_PAGE);
+    if (currentPageTasks > totalPagesTasks && totalPagesTasks > 0) setCurrentPageTasks(totalPagesTasks);
+    
+    const totalPagesStaff = Math.ceil(filteredStaff.length / ITEMS_PER_PAGE);
+    if (currentPageStaff > totalPagesStaff && totalPagesStaff > 0) setCurrentPageStaff(totalPagesStaff);
+    
+    const totalPagesDepts = Math.ceil(departments.length / ITEMS_PER_PAGE);
+    if (currentPageDepts > totalPagesDepts && totalPagesDepts > 0) setCurrentPageDepts(totalPagesDepts);
+  }, [displayedListTasks.length, filteredStaff.length, departments.length, currentPageTasks, currentPageStaff, currentPageDepts]);
 
   const totalNotifPages = Math.ceil(myPendingTasks.length / NOTIFS_PER_PAGE);
   useEffect(() => {
@@ -624,6 +625,60 @@ export default function App() {
   const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay();
   const monthNamesThai = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
   
+  const calendarSlots = useMemo(() => {
+    const slots = {};
+    const dInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
+    
+    for (let day = 1; day <= dInMonth; day++) {
+      const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      slots[dateStr] = [];
+    }
+
+    const monthTasks = tasks.filter(t => {
+      for (let day = 1; day <= dInMonth; day++) {
+        const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        if (isDateInTaskRange(dateStr, t.date, t.end_date)) return true;
+      }
+      return false;
+    }).sort(compareTasks);
+
+    monthTasks.forEach(task => {
+      let slot = 0;
+      let found = false;
+      const taskDates = [];
+      for (let day = 1; day <= dInMonth; day++) {
+        const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        if (isDateInTaskRange(dateStr, task.date, task.end_date)) {
+          taskDates.push(dateStr);
+        }
+      }
+
+      while (!found) {
+        let canFit = true;
+        for (const dateStr of taskDates) {
+          if (slots[dateStr][slot] !== undefined && slots[dateStr][slot] !== null) {
+            canFit = false;
+            break;
+          }
+        }
+        if (canFit) {
+          found = true;
+        } else {
+          slot++;
+        }
+      }
+
+      for (const dateStr of taskDates) {
+        while (slots[dateStr].length <= slot) {
+          slots[dateStr].push(null);
+        }
+        slots[dateStr][slot] = task;
+      }
+    });
+
+    return slots;
+  }, [tasks, currentDate]);
+
   const generateCalendarDays = () => {
     const days = [];
     for (let i = 0; i < firstDayOfMonth; i++) days.push(null);
@@ -640,7 +695,7 @@ export default function App() {
   const getRoleLabel = (role) => {
      switch(role) {
         case 'admin': return 'ผู้ดูแลระบบ';
-        case 'manager': return 'หัวหน้าฝ่าย';
+        case 'manager': return 'หัวหน้าฝ่ายงาน';
         default: return 'ครูและบุคลากร';
      }
   };
@@ -939,11 +994,11 @@ export default function App() {
                   <div 
                     key={index} 
                     onClick={() => handleDayClick(day)}
-                    className={`min-h-[100px] sm:min-h-[120px] bg-white p-1.5 sm:p-2 flex flex-col ${!day ? 'bg-gray-50/50' : 'hover:bg-blue-50/50 transition-colors cursor-pointer'}`}
+                    className={`min-h-[100px] sm:min-h-[120px] bg-white flex flex-col ${!day ? 'bg-gray-50/50' : 'hover:bg-blue-50/50 transition-colors cursor-pointer'}`}
                   >
                     {day && (
                       <>
-                        <div className="flex justify-between items-start mb-1">
+                        <div className="flex justify-between items-start mb-1 pt-1.5 sm:pt-2 px-1.5 sm:px-2">
                           <span className={`text-xs sm:text-sm font-semibold w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-full ${isToday ? 'bg-blue-600 text-white shadow-md' : 'text-gray-700'}`}>
                             {day}
                           </span>
@@ -953,7 +1008,7 @@ export default function App() {
                         </div>
                         
                         {/* Task Dots for Mobile */}
-                        <div className="flex flex-wrap gap-1 sm:hidden mt-1">
+                        <div className="flex flex-wrap gap-1 sm:hidden mt-1 px-1.5">
                            {dayTasks.map((task, i) => i < 3 && (
                              <div key={task.id} className="w-2 h-2 rounded-full bg-blue-500"></div>
                            ))}
@@ -961,13 +1016,56 @@ export default function App() {
                         </div>
 
                         {/* Task List for Desktop */}
-                        <div className="hidden sm:flex flex-1 overflow-y-auto custom-scrollbar flex-col space-y-1.5 pr-1">
-                          {dayTasks.map(task => (
-                            <div key={task.id} className="text-[11px] p-1.5 rounded-md border bg-blue-50 text-blue-700 border-blue-200 transition-opacity truncate shadow-sm font-medium flex justify-between" title={task.title}>
-                              <span className="truncate">{task.title}</span>
-                              {task.time && <span className="flex-shrink-0 ml-1 opacity-70">{task.time.substring(0,5)}</span>}
-                            </div>
-                          ))}
+                        <div className="hidden sm:flex flex-1 overflow-y-auto custom-scrollbar flex-col pt-1 overflow-x-hidden">
+                          {(() => {
+                            const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            const slottedTasks = calendarSlots[dateStr] || [];
+                            
+                            return slottedTasks.map((task, slotIndex) => {
+                              if (!task) {
+                                return <div key={`empty-${slotIndex}`} className="h-[26px] mb-1.5 w-full shrink-0"></div>;
+                              }
+                              
+                              const isTaskStart = task.date === dateStr;
+                              const isTaskEnd = !task.end_date || task.end_date === dateStr;
+                              const isWeekStart = index % 7 === 0;
+                              const isWeekEnd = index % 7 === 6;
+
+                              const connectLeft = !isTaskStart && !isWeekStart;
+                              const connectRight = !isTaskEnd && !isWeekEnd;
+
+                              let wrapperClasses = "h-[26px] text-[10.5px] transition-opacity truncate font-medium flex items-center justify-between shrink-0 relative cursor-pointer ";
+                              
+                              if (connectLeft && connectRight) {
+                                wrapperClasses += "rounded-none border-y border-blue-200 bg-blue-100/80 text-blue-800 border-x-0 mb-1.5 pl-2";
+                              } else if (connectLeft) {
+                                wrapperClasses += "rounded-r-md border-y border-r border-blue-200 bg-blue-100/80 text-blue-800 border-l-0 mb-1.5 mr-1.5 sm:mr-2 pl-2";
+                              } else if (connectRight) {
+                                wrapperClasses += "rounded-l-md border-y border-l border-blue-200 bg-blue-50 text-blue-700 border-r-0 shadow-sm mb-1.5 ml-1.5 sm:ml-2 pl-2";
+                              } else {
+                                wrapperClasses += "rounded-md border border-blue-200 bg-blue-50 text-blue-700 mb-1.5 shadow-sm mx-1.5 sm:mx-2 pl-2";
+                              }
+
+                              const showTitle = isTaskStart || isWeekStart;
+
+                              return (
+                                <div 
+                                  key={`${task.id}-${dateStr}`} 
+                                  className={wrapperClasses} 
+                                  title={task.title}
+                                >
+                                  {showTitle ? (
+                                    <>
+                                      <span className="truncate flex-1">{task.title}</span>
+                                      {task.time && isTaskStart && <span className="flex-shrink-0 ml-1 opacity-70 text-[9px]">{task.time.substring(0,5)}</span>}
+                                    </>
+                                  ) : (
+                                    <span>&nbsp;</span>
+                                  )}
+                                </div>
+                              );
+                            });
+                          })()}
                         </div>
                       </>
                     )}
@@ -1084,12 +1182,31 @@ export default function App() {
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="p-4 border-b border-gray-200 bg-gray-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
               <h2 className="text-xl font-bold text-gray-800">จัดการข้อมูลบุคลากร</h2>
-              <button 
-                onClick={() => { setEditingStaffId(null); setNewStaff({ name: '', department: '', role: 'staff', username: '', password: '' }); setIsStaffModalOpen(true); }}
-                className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-sm font-medium transition-colors"
-              >
-                <UserPlus className="w-4 h-4" /> เพิ่มบุคลากร
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                <div className="relative flex-grow">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Search className="h-4 w-4 text-gray-400" />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="ค้นหาชื่อ หรือ ฝ่าย..."
+                    value={searchQuery}
+                    onChange={(e) => { setSearchQuery(e.target.value); setCurrentPageStaff(1); }}
+                    className="block w-full pl-9 pr-3 py-1.5 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors"
+                  />
+                </div>
+                <button 
+                  onClick={() => { 
+                    setEditingStaffId(null); 
+                    setNewStaff({ name: '', department: '', role: 'staff', username: '', password: '' }); 
+                    setShowStaffPassword(false); // ซ่อนรหัสผ่านเมื่อกดปุ่มเพิ่ม
+                    setIsStaffModalOpen(true); 
+                  }}
+                  className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 text-sm font-medium transition-colors shrink-0"
+                >
+                  <UserPlus className="w-4 h-4" /> เพิ่มบุคลากร
+                </button>
+              </div>
             </div>
             
             <div className="overflow-x-auto">
@@ -1104,7 +1221,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-sm">
-                  {staffList.slice((currentPageStaff - 1) * ITEMS_PER_PAGE, currentPageStaff * ITEMS_PER_PAGE).map((staff) => (
+                  {filteredStaff.slice((currentPageStaff - 1) * ITEMS_PER_PAGE, currentPageStaff * ITEMS_PER_PAGE).map((staff) => (
                     <tr key={staff.id} className="hover:bg-blue-50/30 transition-colors group">
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3">
@@ -1124,11 +1241,17 @@ export default function App() {
                           {getRoleLabel(staff.role)}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-gray-600 font-mono text-xs">{staff.username}</td>
+                      <td className="py-3 px-4 text-gray-700 text-sm font-medium">{staff.username}</td>
                       <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center justify-end gap-2">
                           <button 
-                            onClick={() => { setEditingStaffId(staff.id); setNewStaff(staff); setIsStaffModalOpen(true); }} 
+                            onClick={() => { 
+                              setEditingStaffId(staff.id); 
+                              // ไม่ดึงรหัสผ่านเก่ามาแสดง เพื่อความปลอดภัย และป้องกันการเข้ารหัสซ้ำ
+                              setNewStaff({ ...staff, password: '' }); 
+                              setShowStaffPassword(false); // ซ่อนรหัสผ่านเมื่อกดแก้ไข
+                              setIsStaffModalOpen(true); 
+                            }} 
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="แก้ไข"
                           >
                             <Edit className="w-4 h-4" />
@@ -1142,11 +1265,13 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
-              {staffList.length === 0 && (
-                <div className="p-6 text-center text-sm text-gray-500">ไม่มีข้อมูลบุคลากรในระบบ</div>
+              {filteredStaff.length === 0 && (
+                <div className="p-6 text-center text-sm text-gray-500">
+                  {staffList.length === 0 ? 'ไม่มีข้อมูลบุคลากรในระบบ' : 'ไม่พบข้อมูลบุคลากรที่ค้นหา'}
+                </div>
               )}
             </div>
-            {renderPagination(currentPageStaff, staffList.length, setCurrentPageStaff)}
+            {renderPagination(currentPageStaff, filteredStaff.length, setCurrentPageStaff)}
           </div>
         )}
 
@@ -1208,7 +1333,7 @@ export default function App() {
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="flex items-center justify-end gap-2">
                               <button 
                                 onClick={() => { setEditingDept(dept); setEditDeptInput(dept); }} 
                                 className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors" title="แก้ไข"
@@ -1559,7 +1684,7 @@ export default function App() {
             <div className="p-5 space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">ชื่อผู้ใช้งาน (Username)</label>
-                <input type="text" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all" placeholder="กรอกชื่อผู้ใช้..." />
+                <input type="text" autoComplete="off" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all" placeholder="กรอกชื่อผู้ใช้..." />
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">รหัสผ่าน</label>
@@ -1631,9 +1756,9 @@ export default function App() {
                        value={newStaff.role} onChange={e => setNewStaff({...newStaff, role: e.target.value})} 
                        className="w-full appearance-none border border-gray-300 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white hover:border-blue-400 cursor-pointer text-gray-700"
                      >
-                        <option value="staff">บุคลากรทั่วไป (ดูปฏิทิน)</option>
-                        <option value="manager">หัวหน้าฝ่าย (สร้างกิจกรรมได้)</option>
-                        <option value="admin">ผู้บริหารระบบ (จัดการได้ทุกอย่าง)</option>
+                        <option value="staff">ครูและบุคลากร</option>
+                        <option value="manager">หัวหน้าฝ่ายงาน</option>
+                        <option value="admin">ผู้ดูแลระบบ</option>
                      </select>
                      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
                        <ChevronDown className="w-4 h-4" />
@@ -1647,11 +1772,27 @@ export default function App() {
                  <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1.5">Username <span className="text-red-500">*</span></label>
-                      <input type="text" value={newStaff.username} onChange={e => setNewStaff({...newStaff, username: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" placeholder="เช่น kru.jaidee" />
+                      <input type="text" autoComplete="off" value={newStaff.username} onChange={e => setNewStaff({...newStaff, username: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" placeholder="เช่น kru.jaidee" />
                     </div>
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password <span className="text-red-500">*</span></label>
-                      <input type="text" value={newStaff.password} onChange={e => setNewStaff({...newStaff, password: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" placeholder={editingStaffId ? "เว้นว่างไว้หากไม่เปลี่ยน" : "ตั้งรหัสผ่าน"} />
+                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">Password {!editingStaffId && <span className="text-red-500">*</span>}</label>
+                      <div className="relative">
+                        <input 
+                          type={showStaffPassword ? "text" : "password"} 
+                          autoComplete="new-password" 
+                          value={newStaff.password || ''} 
+                          onChange={e => setNewStaff({...newStaff, password: e.target.value})} 
+                          className="w-full border border-gray-300 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all bg-blue-50/30" 
+                          placeholder={editingStaffId ? "เว้นว่างไว้หากไม่เปลี่ยน" : "ตั้งรหัสผ่าน"} 
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowStaffPassword(!showStaffPassword)}
+                          className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-600 focus:outline-none"
+                        >
+                          {showStaffPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
                  </div>
               </div>
