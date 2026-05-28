@@ -1731,7 +1731,6 @@ export default function App() {
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">ชื่อ-สกุล <span className="text-red-500">*</span></label>
                 <input type="text" value={newStaff.name} onChange={e => setNewStaff({...newStaff, name: e.target.value})} className="w-full border border-gray-300 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all" placeholder="เช่น ครูใจดี มีสุข" />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                  <div>
                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">ฝ่าย/แผนก</label>
                    <div className="relative">
@@ -1765,7 +1764,6 @@ export default function App() {
                      </div>
                    </div>
                  </div>
-              </div>
               
               <div className="border-t border-gray-200 pt-4 mt-2">
                  <h3 className="text-sm font-bold text-blue-800 mb-3">ข้อมูลสำหรับการเข้าสู่ระบบ</h3>
