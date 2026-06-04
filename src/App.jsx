@@ -317,6 +317,29 @@ export default function App() {
     .sort(compareTasks) 
     : [];
 
+  const alertedTasksRef = useRef(new Set());
+
+  useEffect(() => {
+    if (!currentUser || myPendingTasks.length === 0) return;
+    
+    myPendingTasks.forEach(task => {
+      if (!task.time || alertedTasksRef.current.has(task.id)) return;
+      
+      const [year, month, day] = task.date.split('-');
+      const [h, m] = task.time.split(':');
+      const taskDateTime = new Date(year, month - 1, day, parseInt(h, 10), parseInt(m, 10), 0, 0);
+      
+      const timeDiffMs = taskDateTime - currentTime;
+      const timeDiffMinutes = Math.floor(timeDiffMs / 60000);
+      
+      // แจ้งเตือนก่อน 5 นาที
+      if (timeDiffMinutes >= 0 && timeDiffMinutes <= 5) {
+        showModal('แจ้งเตือนกิจกรรมใกล้ถึงเวลา', `กิจกรรม "${task.title}" จะเริ่มในอีก ${timeDiffMinutes} นาที (เวลา ${formatTimeThai(task.time)})`, 'info');
+        alertedTasksRef.current.add(task.id);
+      }
+    });
+  }, [currentTime, myPendingTasks, currentUser]);
+
   const displayedListTasks = tasks
     .filter(t => isUpcoming(t.date, t.time, t.end_date))
     .filter(t => listFilter === 'all' || (listFilter === 'mine' && currentUser && t.assignees.includes(currentUser.id)))

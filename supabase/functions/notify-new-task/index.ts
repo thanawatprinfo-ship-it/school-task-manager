@@ -81,12 +81,7 @@ serve(async (req) => {
           type: "box",
           layout: "vertical",
           paddingAll: "xl",
-          background: {
-            type: "linearGradient",
-            angle: "135deg",
-            startColor: startColor,
-            endColor: endColor
-          },
+          backgroundColor: mainColor,
           contents: [
             { type: "text", text: iconText, color: "#ffffff", weight: "bold", size: "md" }
           ]
@@ -151,19 +146,18 @@ serve(async (req) => {
                 },
                 {
                   type: "box",
-                  layout: "horizontal",
+                  layout: "vertical",
                   contents: [
-                    { type: "text", text: "สถานที่", color: "#68626e", size: "sm", flex: 2 },
+                    { type: "text", text: "สถานที่", color: "#68626e", size: "sm" },
                     { 
                       type: "text", 
                       text: task.location || 'ไม่ระบุ', 
                       color: "#1b1c1c", 
                       size: "sm", 
-                      flex: 5, 
-                      align: "end", 
                       wrap: true, 
                       weight: "bold",
-                      decoration: actionType === 'delete' ? "line-through" : "none"
+                      decoration: actionType === 'delete' ? "line-through" : "none",
+                      margin: "sm"
                     }
                   ]
                 }
@@ -175,7 +169,7 @@ serve(async (req) => {
               layout: "horizontal",
               margin: "xl",
               contents: [
-                { type: "text", text: actionType === 'delete' ? "ยกเลิกโดย" : "มอบหมายโดย", color: "#68626e", size: "sm", flex: 2 },
+                { type: "text", text: actionType === 'delete' ? "ยกเลิกโดย" : "มอบหมายโดย", color: "#68626e", size: "sm", flex: 4 },
                 { type: "text", text: assignerName, color: "#1b1c1c", size: "sm", flex: 5, align: "end", weight: "bold", wrap: true }
               ]
             }
@@ -207,15 +201,17 @@ serve(async (req) => {
 
     const promises = [];
     
-    // ส่งเข้ากลุ่มทั้งหมดที่กำหนดไว้ (ใช้ Multicast รองรับได้สูงสุด 500 กลุ่มพร้อมกัน)
+    // ส่งเข้ากลุ่มทั้งหมดที่กำหนดไว้ (ใช้ Push เพราะ Multicast ไม่รองรับ Group ID/Room ID)
     if (groupIds.length > 0) {
-      promises.push(
-        fetch("https://api.line.me/v2/bot/message/multicast", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${LINE_ACCESS_TOKEN}` },
-          body: JSON.stringify({ to: groupIds, messages: [flexMessage] })
-        }).then(async (res) => console.log("ผลการส่งเข้ากลุ่ม:", await res.json())) 
-      );
+      for (const groupId of groupIds) {
+        promises.push(
+          fetch("https://api.line.me/v2/bot/message/push", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${LINE_ACCESS_TOKEN}` },
+            body: JSON.stringify({ to: groupId, messages: [flexMessage] })
+          }).then(async (res) => console.log(`ผลการส่งเข้ากลุ่ม ${groupId}:`, await res.json())) 
+        );
+      }
     }
 
     // ส่งเข้าแชทส่วนตัวของผู้รับผิดชอบ (แบบ Multicast)
