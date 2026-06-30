@@ -5,6 +5,7 @@ const LINE_ACCESS_TOKEN = Deno.env.get("LINE_ACCESS_TOKEN");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -124,7 +125,7 @@ serve(async (req) => {
 
     const results = [];
 
-    // 3. วนลูปส่งแจ้งเตือนทีละงานให้ผู้รับผิดชอบ
+    // 3. วนลูปส่งแจ้งเตือนทีละงานให้ผู้รับผิดชอบและกลุ่ม
     for (const task of tasks) {
       // คัดกรองเอาเฉพาะคนที่มี line_user_id 
       // (ข้อมูลจะซ้อนอยู่ใน task.task_assignees[i].staff.line_user_id)
@@ -132,24 +133,35 @@ serve(async (req) => {
         .map((assignee: any) => assignee.staff?.line_user_id)
         .filter((id: any) => id != null);
 
+      const flexMessage = createReminderFlexMessage(task, siteUrl);
+      const promises = [];
+
+      // ส่งเข้าแชทส่วนตัวของผู้รับผิดชอบ
       if (lineUserIds.length > 0) {
-        const flexMessage = createReminderFlexMessage(task, siteUrl);
+        promises.push(
+          fetch("https://api.line.me/v2/bot/message/multicast", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${LINE_ACCESS_TOKEN}`
+            },
+            body: JSON.stringify({
+              to: lineUserIds,
+              messages: [flexMessage]
+            })
+          }).then(res => res.json())
+        );
+      }
 
-        // ส่งข้อความผ่าน LINE Multicast API
-        const lineResponse = await fetch("https://api.line.me/v2/bot/message/multicast", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${LINE_ACCESS_TOKEN}`
-          },
-          body: JSON.stringify({
-            to: lineUserIds,
-            messages: [flexMessage]
-          })
+
+
+      if (promises.length > 0) {
+        const taskResults = await Promise.all(promises);
+        results.push({ 
+          taskId: task.id, 
+          sentToUsers: lineUserIds.length, 
+          result: taskResults 
         });
-
-        const lineResult = await lineResponse.json();
-        results.push({ taskId: task.id, sentTo: lineUserIds.length, result: lineResult });
       }
     }
 

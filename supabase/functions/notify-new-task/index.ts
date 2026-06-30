@@ -1,8 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const LINE_ACCESS_TOKEN = Deno.env.get("LINE_ACCESS_TOKEN");
-const SCHOOL_GROUP_IDS_ENV = Deno.env.get("SCHOOL_GROUP_IDS") || Deno.env.get("SCHOOL_GROUP_ID") || "";
-const groupIds = SCHOOL_GROUP_IDS_ENV.split(',').map(id => id.trim()).filter(id => id.length > 0);
+
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -24,7 +23,6 @@ serve(async (req) => {
     // ---------------------------------------------------------
     // 🐞 DEBUG LOGS
     console.log("========================================");
-    console.log("เป้าหมาย Group IDs:", groupIds);
     console.log("เป้าหมาย User IDs (ส่งแชทส่วนตัว):", userIds);
     // ---------------------------------------------------------
 
@@ -201,18 +199,6 @@ serve(async (req) => {
 
     const promises = [];
     
-    // ส่งเข้ากลุ่มทั้งหมดที่กำหนดไว้ (ใช้ Push เพราะ Multicast ไม่รองรับ Group ID/Room ID)
-    if (groupIds.length > 0) {
-      for (const groupId of groupIds) {
-        promises.push(
-          fetch("https://api.line.me/v2/bot/message/push", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${LINE_ACCESS_TOKEN}` },
-            body: JSON.stringify({ to: groupId, messages: [flexMessage] })
-          }).then(async (res) => console.log(`ผลการส่งเข้ากลุ่ม ${groupId}:`, await res.json())) 
-        );
-      }
-    }
 
     // ส่งเข้าแชทส่วนตัวของผู้รับผิดชอบ (แบบ Multicast)
     if (userIds && userIds.length > 0) {
