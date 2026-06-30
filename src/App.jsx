@@ -765,7 +765,12 @@ export default function App() {
   if (loading || isLineVerifying) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center font-['IBM_Plex_Sans_Thai']">
-        <div className={`animate-spin rounded-full h-12 w-12 border-b-4 mb-4 ${isLineVerifying ? 'border-[#06C755]' : 'border-blue-600'}`}></div>
+        <lord-icon
+          src="https://cdn.lordicon.com/qznlhdss.json"
+          trigger="loop"
+          colors={`primary:${isLineVerifying ? '#06C755' : '#2563eb'}`}
+          style={{ width: '80px', height: '80px', marginBottom: '16px' }}
+        ></lord-icon>
         <p className="text-gray-600 font-medium">
           {isLineVerifying ? 'กำลังดำเนินการผูกบัญชี LINE ของคุณ...' : 'กำลังเชื่อมต่อฐานข้อมูล...'}
         </p>
